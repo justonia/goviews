@@ -1,17 +1,17 @@
 // The MIT License (MIT)
-// 
+//
 // Copyright (c) 2014 Justin Larrabee
-// 
+//
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
 // in the Software without restriction, including without limitation the rights
 // to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
 // copies of the Software, and to permit persons to whom the Software is
 // furnished to do so, subject to the following conditions:
-// 
+//
 // The above copyright notice and this permission notice shall be included in all
 // copies or substantial portions of the Software.
-// 
+//
 // THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 // IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
 // FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
@@ -27,15 +27,70 @@ package views
 
 import (
 	//"encoding/json"
-	//"reflect"
+	"fmt"
+	"reflect"
+	"strings"
 	//"sync"
 )
 
-/*
-// typeFields returns a list of fields that JSON should recognize for the given type.
-// The algorithm is breadth-first search over the set of structs to include - the top struct
-// and then any reachable anonymous structs.
-func typeFields(t reflect.Type) []field {
+type ViewError struct {
+	Reason string
+}
+func (v ViewError) Error() string {
+	return fmt.Sprintf("view error - %s", v.Reason)
+}
+
+func fillFromMap(out interface{}, basePath []string, in map[string]interface{}) error {
+	/*
+	container, err := getContainer(basePath, in)
+	if err != nil {
+		return err
+	}
+
+	outFields := getFields(reflect.TypeOf(out))
+	for _, field := range outFields {
+			
+	}
+	*/
+	return nil
+}
+
+func getContainer(path []string, container map[string]interface{}) (map[string]interface{}, error) {
+	if len(path) == 0 {
+		return nil, ViewError{"empty path"}
+	}
+	outContainer := container
+	var ok bool
+	for i, key := range path {
+		var mapValue interface{}
+		if mapValue, ok = outContainer[key]; !ok {
+			return nil, ViewError{fmt.Sprintf("no such key '%s' at index %d in path '%s'", key, i, strings.Join(path, "."))}
+		} 
+		if outContainer, ok = mapValue.(map[string]interface{}); !ok {
+			return nil, ViewError{fmt.Sprintf("for key '%s' at index %d in path '%s', expected map[string]interface{} not %s", key, i, strings.Join(path, "."), reflect.TypeOf(mapValue))}
+		}
+	}
+	return outContainer, nil
+}
+
+// A field represents a single field found in a struct.
+type field struct {
+	name      string
+	path      []string
+
+	tag     bool
+	index   []int
+	typ     reflect.Type
+	convert bool
+}
+
+func fillField(f field) field {
+	f.path = strings.Split(f.name, ".")
+	return f
+}
+
+// For each public field in the struct, collect and record it's attributes
+func getFields(t reflect.Type) []field {
 	// Anonymous fields to explore at the current level and the next.
 	current := []field{}
 	next := []field{{typ: t}}
@@ -44,61 +99,60 @@ func typeFields(t reflect.Type) []field {
 	count := map[reflect.Type]int{}
 	nextCount := map[reflect.Type]int{}
 
-	// Types already visited at an earlier level.
+	// Types already visited and fields collected
 	visited := map[reflect.Type]bool{}
-
-	// Fields found.
 	var fields []field
 
 	for len(next) > 0 {
 		current, next = next, current[:0]
 		count, nextCount = nextCount, map[reflect.Type]int{}
 
-		for _, f := range current {
-			if visited[f.typ] {
+		for _, typeField := range current {
+			if visited[typeField.typ] {
 				continue
 			}
-			visited[f.typ] = true
+			visited[typeField.typ] = true
 
 			// Scan f.typ for fields to include.
-			for i := 0; i < f.typ.NumField(); i++ {
-				sf := f.typ.Field(i)
-				if sf.PkgPath != "" { // unexported
+			for i := 0; i < typeField.typ.NumField(); i++ {
+				structField := typeField.typ.Field(i)
+				if structField.PkgPath != "" { // unexported
 					continue
 				}
-				tag := sf.Tag.Get("json")
+				tag := structField.Tag.Get("views")
 				if tag == "-" {
 					continue
 				}
-				name, opts := parseTag(tag)
+				name, path, opts := parseTag(tag)
 				if !isValidTag(name) {
 					name = ""
 				}
-				index := make([]int, len(f.index)+1)
-				copy(index, f.index)
-				index[len(f.index)] = i
+				index := make([]int, len(typeField.index)+1)
+				copy(index, typeField.index)
+				index[len(typeField.index)] = i
 
-				ft := sf.Type
-				if ft.Name() == "" && ft.Kind() == reflect.Ptr {
+				structFieldType := structField.Type
+				if structFieldType.Name() == "" && structFieldType.Kind() == reflect.Ptr {
 					// Follow pointer.
-					ft = ft.Elem()
+					structFieldType = structFieldType.Elem()
 				}
 
 				// Record found field and index sequence.
-				if name != "" || !sf.Anonymous || ft.Kind() != reflect.Struct {
+				if name != "" || !structField.Anonymous || structFieldType.Kind() != reflect.Struct {
 					tagged := name != ""
 					if name == "" {
-						name = sf.Name
+						name = structField.Name
+						path = []string{structField.Name}
 					}
 					fields = append(fields, fillField(field{
-						name:      name,
-						tag:       tagged,
-						index:     index,
-						typ:       ft,
-						omitEmpty: opts.Contains("omitempty"),
-						quoted:    opts.Contains("string"),
+						name:    name,
+						path:    path,
+						tag:     tagged,
+						index:   index,
+						typ:     structFieldType,
+						convert: opts.Contains("convert"),
 					}))
-					if count[f.typ] > 1 {
+					if count[typeField.typ] > 1 {
 						// If there were multiple instances, add a second,
 						// so that the annihilation code will see a duplicate.
 						// It only cares about the distinction between 1 or 2,
@@ -109,47 +163,59 @@ func typeFields(t reflect.Type) []field {
 				}
 
 				// Record new anonymous struct to explore in next round.
-				nextCount[ft]++
-				if nextCount[ft] == 1 {
-					next = append(next, fillField(field{name: ft.Name(), index: index, typ: ft}))
+				nextCount[structFieldType]++
+				if nextCount[structFieldType] == 1 {
+					next = append(next, fillField(field{name: structFieldType.Name(), path:path, index: index, typ: structFieldType}))
 				}
 			}
 		}
 	}
 
-	sort.Sort(byName(fields))
-
-	// Delete all fields that are hidden by the Go rules for embedded fields,
-	// except that fields with JSON tags are promoted.
-
-	// The fields are sorted in primary order of name, secondary order
-	// of field index length. Loop over names; for each name, delete
-	// hidden fields by choosing the one dominant field that survives.
-	out := fields[:0]
-	for advance, i := 0, 0; i < len(fields); i += advance {
-		// One iteration per name.
-		// Find the sequence of fields with the name of this first field.
-		fi := fields[i]
-		name := fi.name
-		for advance = 1; i+advance < len(fields); advance++ {
-			fj := fields[i+advance]
-			if fj.name != name {
-				break
-			}
-		}
-		if advance == 1 { // Only one field with this name
-			out = append(out, fi)
-			continue
-		}
-		dominant, ok := dominantField(fields[i : i+advance])
-		if ok {
-			out = append(out, dominant)
-		}
-	}
-
-	fields = out
-	sort.Sort(byIndex(fields))
-
+	// Sort by path depth so that we don't recurse into the map structure more
+	// than necessary.
 	return fields
 }
-*/
+
+func isValidTag(s string) bool {
+	if s == "" {
+		return false
+	}
+	return true
+}
+
+// tagOptions is the string following a comma in a struct field's "json"
+// tag, or the empty string. It does not include the leading comma.
+type tagOptions string
+
+// parseTag splits a struct field's views tag into its name and
+// comma-separated options.
+func parseTag(tag string) (string, []string, tagOptions) {
+	if idx := strings.Index(tag, ","); idx != -1 {
+		path := strings.Split(tag[:idx], ".")
+		return path[0], path, tagOptions(tag[idx+1:])
+	}
+	path := strings.Split(tag, ".")
+	return path[len(path)-1], path[:len(path)-2], tagOptions("")
+}
+
+// Contains reports whether a comma-separated list of options
+// contains a particular substr flag. substr must be surrounded by a
+// string boundary or commas.
+func (o tagOptions) Contains(optionName string) bool {
+	if len(o) == 0 {
+		return false
+	}
+	s := string(o)
+	for s != "" {
+		var next string
+		i := strings.Index(s, ",")
+		if i >= 0 {
+			s, next = s[:i], s[i+1:]
+		}
+		if s == optionName {
+			return true
+		}
+		s = next
+	}
+	return false
+}

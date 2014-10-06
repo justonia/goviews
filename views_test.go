@@ -20,10 +20,13 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-package views_test
+package views
 
 import (
+	"encoding/json"
+	//"fmt"
 	. "gopkg.in/check.v1"
+	//"reflect"
 	"testing"
 )
 
@@ -40,6 +43,70 @@ func (s *ViewsSuite) SetUpTest(c *C) {
 func (s *ViewsSuite) TearDownTest(c *C) {
 }
 
+var validData = []byte(`
+{
+	"a": {
+		"b": {
+			"c": 2000,
+			"d": {
+				"field1": "foobar",
+				"field2": [
+					"bar",
+					10,
+					20
+				]
+			},
+			"e": [{
+				"field1": "asdf"
+			},{
+				"field2": ["1", "2"]
+			}],
+			"f": [
+
+			]
+		}
+	}
+}`)
+
+func (s *ViewsSuite) getData(bytes []byte) map[string]interface{} {
+	out := make(map[string]interface{})
+	var err error
+	err = json.Unmarshal(bytes, &out)
+	if err != nil {
+		panic(err)
+	}
+	return out
+}
+
+func (s *ViewsSuite) TestGetContainer(c *C) {
+	data := s.getData(validData)
+	container, err := getContainer([]string{}, data)
+	c.Assert(container, IsNil)
+	c.Assert(err, ErrorMatches, ".*empty path.*")
+
+	container, err = getContainer([]string{"b", "c"}, data)
+	c.Assert(container, IsNil)
+	c.Assert(err, ErrorMatches, ".*no such key 'b' at index 0.*")
+
+	container, err = getContainer([]string{"a", "b", "c", "d"}, data)
+	c.Assert(container, IsNil)
+	c.Assert(err, ErrorMatches, ".*for key 'c' at index 2 .* expected map\\[string\\]interface.*")
+
+	container, err = getContainer([]string{"a", "b"}, data)
+	c.Assert(container, DeepEquals, data["a"].(map[string]interface{})["b"])
+	c.Assert(err, IsNil)
+
+	container, err = getContainer([]string{"a", "b", "d"}, data)
+	c.Assert(container["field1"], FitsTypeOf, "")
+	c.Assert(container["field1"].(string), Equals, "foobar")
+	c.Assert(err, IsNil)
+}
+
+func (s *ViewsSuite) TestParseTag(c *C) {
+	c.Assert(func() { parseTag("") }, PanicMatches, ".*out of range.*")
+	//path, name, options := parseTag("")
+}
+
 type subStruct struct {
 	Field1 *string       `views:"field1"`
 	Field2 []interface{} `views:"field2"`
@@ -47,9 +114,27 @@ type subStruct struct {
 
 type testView struct {
 	FieldValue              int64          `views:"a.b.c,convert"`
-	FieldReference          *int64         `views:"a.b.c"`
+	FieldReference          *float64       `views:"a.b.c"`
 	Struct                  subStruct      `views:"a.b.d"`
-	Structs                 []subStruct    `views:"a.b"`
-	GenericStructsValue     []interface{}  `views:"a.f"`
-	GenericStructsReference *[]interface{} `views:"a.f"`
+	Structs                 []subStruct    `views:"a.e"`
+	GenericStructsValue     []interface{}  `views:"a.e"`
+	GenericStructsReference *[]interface{} `views:"a.e"`
+}
+
+func (s *ViewsSuite) TestTypeField(c *C) {
+	/*
+	fields := getFields(reflect.TypeOf(testView{}))
+	c.Assert(fields, HasLen, 6)
+	abcCount := 0
+	for _, f := range fields {
+		fmt.Println(f)
+		switch f.name {
+		case "a.b.c":
+			c.Assert(f.path, DeepEquals, []string{"a","b","c"})
+			c.Assert(f.tag, Equals, true)
+			abcCount += 1
+		}
+	}
+	c.Assert(abcCount, Equals, 2)
+	*/
 }
