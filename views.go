@@ -36,28 +36,79 @@ import (
 type ViewError struct {
 	Reason string
 }
+
 func (v ViewError) Error() string {
 	return fmt.Sprintf("view error - %s", v.Reason)
 }
 
+type MutableFloat interface {
+	Set(float64)
+	Get() float64
+}
+
 func fillFromMap(out interface{}, basePath []string, in map[string]interface{}) error {
-	/*
 	container, err := getContainer(basePath, in)
 	if err != nil {
 		return err
 	}
 
-	outFields := getFields(reflect.TypeOf(out))
-	for _, field := range outFields {
-			
+	outValue := reflect.ValueOf(out)
+	if outValue.Kind() == reflect.Ptr {
+		outValue = outValue.Elem()
 	}
-	*/
+	outFields := getFields(outValue.Type())
+	for _, field := range outFields {
+		var (
+			fieldContainer map[string]interface{}
+			err            error
+			ok             bool
+			v              interface{}
+		)
+		if fieldContainer, err = getContainer(field.path, container); err != nil {
+			return err
+		}
+		if v, ok = fieldContainer[field.name]; !ok {
+			return ViewError{fmt.Sprintf("could not find %s.%s in container", strings.Join(field.path, "."), field.name)}
+		}
+
+		vValue := reflect.ValueOf(v)
+		vType := vValue.Type()
+		fieldOutValue := outValue.FieldByIndex(field.index)
+		fieldOutType := fieldOutValue.Type()
+
+		if fieldOutType.Kind() == reflect.Struct || fieldOutType.Kind() == reflect.Slice || fieldOutType.Kind() == reflect.Ptr {
+			continue
+		}
+
+		assignable := vType.AssignableTo(fieldOutType)
+		//ptrAssignable := vValue.Addr().Type().AssignableTo(fieldOutType)
+		//fmt.Println(field.typ, "ptrAssignable", ptrAssignable)
+		
+		if !fieldOutValue.CanSet() {
+			// This should be caught in getFields below
+			panic(ViewError{fmt.Sprintf("cannot set '%s' to at path '%s.%s'", fieldOutType, strings.Join(field.path, "."), field.name)})
+		//} else if ptrAssignable {
+		} else if !assignable && field.convert && vType.ConvertibleTo(fieldOutType) {
+			// convert below
+		} else if !assignable {
+			return ViewError{fmt.Sprintf("cannot assign or convert '%s' to '%s' at path '%s.%s' in struct of type %s",
+				vType, fieldOutType, strings.Join(field.path, "."), field.name, outValue.Type())}
+		}
+
+		if !assignable {
+			vValue = vValue.Convert(fieldOutType)
+		} else if field.isPtr {
+			vValue = reflect.ValueOf(&v)
+		}
+		fieldOutValue.Set(vValue)
+	}
+
 	return nil
 }
 
 func getContainer(path []string, container map[string]interface{}) (map[string]interface{}, error) {
 	if len(path) == 0 {
-		return nil, ViewError{"empty path"}
+		return container, nil
 	}
 	outContainer := container
 	var ok bool
@@ -65,7 +116,7 @@ func getContainer(path []string, container map[string]interface{}) (map[string]i
 		var mapValue interface{}
 		if mapValue, ok = outContainer[key]; !ok {
 			return nil, ViewError{fmt.Sprintf("no such key '%s' at index %d in path '%s'", key, i, strings.Join(path, "."))}
-		} 
+		}
 		if outContainer, ok = mapValue.(map[string]interface{}); !ok {
 			return nil, ViewError{fmt.Sprintf("for key '%s' at index %d in path '%s', expected map[string]interface{} not %s", key, i, strings.Join(path, "."), reflect.TypeOf(mapValue))}
 		}
@@ -75,17 +126,18 @@ func getContainer(path []string, container map[string]interface{}) (map[string]i
 
 // A field represents a single field found in a struct.
 type field struct {
-	name      string
-	path      []string
+	name string
+	path []string
 
 	tag     bool
 	index   []int
 	typ     reflect.Type
+	isPtr   bool
 	convert bool
 }
 
 func fillField(f field) field {
-	f.path = strings.Split(f.name, ".")
+	//f.path = strings.Split(f.name, ".")
 	return f
 }
 
@@ -132,9 +184,11 @@ func getFields(t reflect.Type) []field {
 				index[len(typeField.index)] = i
 
 				structFieldType := structField.Type
+				isPtr := false
 				if structFieldType.Name() == "" && structFieldType.Kind() == reflect.Ptr {
 					// Follow pointer.
 					structFieldType = structFieldType.Elem()
+					isPtr = true
 				}
 
 				// Record found field and index sequence.
@@ -151,6 +205,7 @@ func getFields(t reflect.Type) []field {
 						index:   index,
 						typ:     structFieldType,
 						convert: opts.Contains("convert"),
+						isPtr:   isPtr,
 					}))
 					if count[typeField.typ] > 1 {
 						// If there were multiple instances, add a second,
@@ -165,7 +220,7 @@ func getFields(t reflect.Type) []field {
 				// Record new anonymous struct to explore in next round.
 				nextCount[structFieldType]++
 				if nextCount[structFieldType] == 1 {
-					next = append(next, fillField(field{name: structFieldType.Name(), path:path, index: index, typ: structFieldType}))
+					next = append(next, fillField(field{name: structFieldType.Name(), path: path, index: index, typ: structFieldType}))
 				}
 			}
 		}
@@ -190,12 +245,15 @@ type tagOptions string
 // parseTag splits a struct field's views tag into its name and
 // comma-separated options.
 func parseTag(tag string) (string, []string, tagOptions) {
+	if len(tag) == 0 {
+		panic("empty tag")
+	}
 	if idx := strings.Index(tag, ","); idx != -1 {
 		path := strings.Split(tag[:idx], ".")
-		return path[0], path, tagOptions(tag[idx+1:])
+		return path[len(path)-1], path[:len(path)-1], tagOptions(tag[idx+1:])
 	}
 	path := strings.Split(tag, ".")
-	return path[len(path)-1], path[:len(path)-2], tagOptions("")
+	return path[len(path)-1], path[:len(path)-1], tagOptions("")
 }
 
 // Contains reports whether a comma-separated list of options

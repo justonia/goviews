@@ -1,17 +1,17 @@
 // The MIT License (MIT)
-// 
+//
 // Copyright (c) 2014 Justin Larrabee
-// 
+//
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
 // in the Software without restriction, including without limitation the rights
 // to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
 // copies of the Software, and to permit persons to whom the Software is
 // furnished to do so, subject to the following conditions:
-// 
+//
 // The above copyright notice and this permission notice shall be included in all
 // copies or substantial portions of the Software.
-// 
+//
 // THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 // IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
 // FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
@@ -24,9 +24,10 @@ package views
 
 import (
 	"encoding/json"
-	//"fmt"
+	"fmt"
 	. "gopkg.in/check.v1"
-	//"reflect"
+	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -43,31 +44,6 @@ func (s *ViewsSuite) SetUpTest(c *C) {
 func (s *ViewsSuite) TearDownTest(c *C) {
 }
 
-var validData = []byte(`
-{
-	"a": {
-		"b": {
-			"c": 2000,
-			"d": {
-				"field1": "foobar",
-				"field2": [
-					"bar",
-					10,
-					20
-				]
-			},
-			"e": [{
-				"field1": "asdf"
-			},{
-				"field2": ["1", "2"]
-			}],
-			"f": [
-
-			]
-		}
-	}
-}`)
-
 func (s *ViewsSuite) getData(bytes []byte) map[string]interface{} {
 	out := make(map[string]interface{})
 	var err error
@@ -79,10 +55,35 @@ func (s *ViewsSuite) getData(bytes []byte) map[string]interface{} {
 }
 
 func (s *ViewsSuite) TestGetContainer(c *C) {
+	validData := []byte(`
+	{
+		"a": {
+			"b": {
+				"c": 2000,
+				"d": {
+					"field1": "foobar",
+					"field2": [
+						"bar",
+						10,
+						20
+					]
+				},
+				"e": [{
+					"field1": "asdf"
+				},{
+					"field2": ["1", "2"]
+				}],
+				"f": [
+
+				]
+			}
+		}
+	}`)
+
 	data := s.getData(validData)
 	container, err := getContainer([]string{}, data)
-	c.Assert(container, IsNil)
-	c.Assert(err, ErrorMatches, ".*empty path.*")
+	c.Assert(container, DeepEquals, data)
+	c.Assert(err, IsNil)
 
 	container, err = getContainer([]string{"b", "c"}, data)
 	c.Assert(container, IsNil)
@@ -103,8 +104,31 @@ func (s *ViewsSuite) TestGetContainer(c *C) {
 }
 
 func (s *ViewsSuite) TestParseTag(c *C) {
-	c.Assert(func() { parseTag("") }, PanicMatches, ".*out of range.*")
-	//path, name, options := parseTag("")
+	c.Assert(func() { parseTag("") }, PanicMatches, ".*empty tag.*")
+
+	name, path, options := parseTag("foo")
+	c.Assert(name, Equals, "foo")
+	c.Assert(path, HasLen, 0)
+	c.Assert(options, Equals, tagOptions(""))
+
+	name, path, options = parseTag("foo.bar.baz")
+	c.Assert(name, Equals, "baz")
+	c.Assert(path, HasLen, 2)
+	c.Assert(path, DeepEquals, []string{"foo", "bar"})
+	c.Assert(options, Equals, tagOptions(""))
+
+	name, path, options = parseTag("foo.bar.baz,convert")
+	c.Assert(name, Equals, "baz")
+	c.Assert(path, HasLen, 2)
+	c.Assert(path, DeepEquals, []string{"foo", "bar"})
+	c.Assert(options, Equals, tagOptions("convert"))
+	c.Assert(options.Contains("convert"), Equals, true)
+	c.Assert(options.Contains("blah"), Equals, false)
+
+	name, path, options = parseTag("foo.bar.baz,convert,omit")
+	c.Assert(options, Equals, tagOptions("convert,omit"))
+	c.Assert(options.Contains("convert"), Equals, true)
+	c.Assert(options.Contains("omit"), Equals, true)
 }
 
 type subStruct struct {
@@ -113,8 +137,9 @@ type subStruct struct {
 }
 
 type testView struct {
-	FieldValue              int64          `views:"a.b.c,convert"`
-	FieldReference          *float64       `views:"a.b.c"`
+	FieldConvertValue       int64          `views:"a.b.c,convert"`
+	FieldValue              float64        `views:"a.b.c"`
+	//FieldReference          MutableFloat   `views:"a.b.c"`
 	Struct                  subStruct      `views:"a.b.d"`
 	Structs                 []subStruct    `views:"a.e"`
 	GenericStructsValue     []interface{}  `views:"a.e"`
@@ -122,19 +147,76 @@ type testView struct {
 }
 
 func (s *ViewsSuite) TestTypeField(c *C) {
-	/*
 	fields := getFields(reflect.TypeOf(testView{}))
 	c.Assert(fields, HasLen, 6)
 	abcCount := 0
+	aeCount := 0
 	for _, f := range fields {
-		fmt.Println(f)
-		switch f.name {
+		switch strings.Join(append(f.path, f.name), ".") {
 		case "a.b.c":
-			c.Assert(f.path, DeepEquals, []string{"a","b","c"})
+			c.Assert(f.path, DeepEquals, []string{"a", "b"})
 			c.Assert(f.tag, Equals, true)
+			switch f.typ.Kind() {
+			case reflect.Int64:
+				c.Assert(f.convert, Equals, true)
+			case reflect.Float64:
+				c.Assert(f.convert, Equals, false)
+			default:
+				panic(fmt.Sprintf("unknown typ field '%s' for a.b.c", f.typ))
+			}
 			abcCount += 1
+
+		case "a.e":
+			aeCount += 1
+
 		}
 	}
+	c.Assert(aeCount, Equals, 3)
 	c.Assert(abcCount, Equals, 2)
-	*/
+
+	fields = getFields(reflect.TypeOf(subStruct{}))
+	c.Assert(fields, HasLen, 2)
+	for _, f := range fields {
+		switch f.name {
+		case "field1":
+			c.Assert(f.typ, Equals, reflect.TypeOf(""))
+		case "field2":
+			c.Assert(f.typ, Equals, reflect.TypeOf([]interface{}{}))
+		default:
+			panic(fmt.Sprintf("unknown subStruct field %s", f.name))
+		}
+	}
+}
+
+func (s *ViewsSuite) TestFillFromMap(c *C) {
+	validData := []byte(`
+	{
+		"a": {
+			"b": {
+				"c": 2000,
+				"d": {
+					"field1": "foobar",
+					"field2": [
+						"bar",
+						10,
+						20
+					]
+				},
+				"f": [
+
+				]
+			},
+			"e": [{
+				"field1": "asdf"
+			},{
+				"field2": ["1", "2"]
+			}]
+		}
+	}`)
+	data := s.getData(validData)
+	out := testView{}
+	err := fillFromMap(&out, []string{}, data)
+	c.Assert(err, IsNil)
+	c.Assert(out.FieldConvertValue, Equals, int64(2000))
+	c.Assert(out.FieldValue, Equals, float64(2000))
 }
