@@ -188,8 +188,8 @@ func getFields(t reflect.Type) []field {
 				index[len(typeField.index)] = i
 
 				structFieldType := structField.Type
-				isPtr := false
-				if structFieldType.Name() == "" && structFieldType.Kind() == reflect.Ptr {
+				isPtr := structFieldType.Kind() == reflect.Ptr
+				if structFieldType.Name() == "" && isPtr {
 					// Follow pointer.
 					structFieldType = structFieldType.Elem()
 					isPtr = true

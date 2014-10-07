@@ -139,12 +139,15 @@ type subStruct struct {
 	Field2 []interface{} `views:"field2"`
 }
 
+type StringTypedef string
+
 type testView struct {
 	FieldFloatConvertValue   int64   `views:"a.b.c,convert"`
 	FieldFloatValue          float64 `views:"a.b.c"`
 	FieldStringValue         string
-	FieldStringValueIgnore   string `views:"-"`
-	FieldStringValueOptional string `views:",optional"`
+	FieldStringTypedef       StringTypedef `views:"FieldStringValue,convert"`
+	FieldStringValueIgnore   string        `views:"-"`
+	FieldStringValueOptional string        `views:",optional"`
 	//FieldReference          MutableFloat   `views:"a.b.c"`
 	Struct                  subStruct      `views:"a.b.d"`
 	Structs                 []subStruct    `views:"a.e"`
@@ -233,6 +236,7 @@ func (s *ViewsSuite) TestFillFromMap(c *C) {
 	c.Assert(out.FieldFloatConvertValue, Equals, int64(2000))
 	c.Assert(out.FieldFloatValue, Equals, float64(2000))
 	c.Assert(out.FieldStringValue, Equals, "foobar")
+	c.Assert(out.FieldStringTypedef, Equals, StringTypedef("foobar"))
 	c.Assert(out.FieldStringValueOptional, Equals, "foobar2")
 	c.Assert(out.FieldStringValueIgnore, Equals, "")
 
