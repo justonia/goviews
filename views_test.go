@@ -104,9 +104,12 @@ func (s *ViewsSuite) TestGetContainer(c *C) {
 }
 
 func (s *ViewsSuite) TestParseTag(c *C) {
-	c.Assert(func() { parseTag("") }, PanicMatches, ".*empty tag.*")
+	name, path, options := parseTag("")
+	c.Assert(name, Equals, "")
+	c.Assert(path, HasLen, 0)
+	c.Assert(options, Equals, tagOptions(""))
 
-	name, path, options := parseTag("foo")
+	name, path, options = parseTag("foo")
 	c.Assert(name, Equals, "foo")
 	c.Assert(path, HasLen, 0)
 	c.Assert(options, Equals, tagOptions(""))
@@ -137,8 +140,11 @@ type subStruct struct {
 }
 
 type testView struct {
-	FieldConvertValue       int64          `views:"a.b.c,convert"`
-	FieldValue              float64        `views:"a.b.c"`
+	FieldFloatConvertValue   int64   `views:"a.b.c,convert"`
+	FieldFloatValue          float64 `views:"a.b.c"`
+	FieldStringValue         string
+	FieldStringValueIgnore   string `views:"-"`
+	FieldStringValueOptional string `views:",optional"`
 	//FieldReference          MutableFloat   `views:"a.b.c"`
 	Struct                  subStruct      `views:"a.b.d"`
 	Structs                 []subStruct    `views:"a.e"`
@@ -148,7 +154,7 @@ type testView struct {
 
 func (s *ViewsSuite) TestTypeField(c *C) {
 	fields := getFields(reflect.TypeOf(testView{}))
-	c.Assert(fields, HasLen, 6)
+	//c.Assert(fields, HasLen, 8)
 	abcCount := 0
 	aeCount := 0
 	for _, f := range fields {
@@ -169,6 +175,7 @@ func (s *ViewsSuite) TestTypeField(c *C) {
 		case "a.e":
 			aeCount += 1
 
+		case "FieldStringValue":
 		}
 	}
 	c.Assert(aeCount, Equals, 3)
@@ -210,13 +217,31 @@ func (s *ViewsSuite) TestFillFromMap(c *C) {
 				"field1": "asdf"
 			},{
 				"field2": ["1", "2"]
-			}]
-		}
+			}],
+			"g": {
+				"a": { "e": [], "b": { "c": 5000, "d":[]  } } ,
+				"FieldStringValue": "barbaz"
+			}
+		},
+		"FieldStringValue": "foobar",
+		"FieldStringValueOptional": "foobar2"
 	}`)
 	data := s.getData(validData)
 	out := testView{}
 	err := fillFromMap(&out, []string{}, data)
 	c.Assert(err, IsNil)
-	c.Assert(out.FieldConvertValue, Equals, int64(2000))
-	c.Assert(out.FieldValue, Equals, float64(2000))
+	c.Assert(out.FieldFloatConvertValue, Equals, int64(2000))
+	c.Assert(out.FieldFloatValue, Equals, float64(2000))
+	c.Assert(out.FieldStringValue, Equals, "foobar")
+	c.Assert(out.FieldStringValueOptional, Equals, "foobar2")
+	c.Assert(out.FieldStringValueIgnore, Equals, "")
+
+	out = testView{}
+	err = fillFromMap(&out, []string{"a", "g"}, data)
+	c.Assert(err, IsNil)
+	c.Assert(out.FieldStringValue, Equals, "barbaz")
+	c.Assert(out.FieldFloatConvertValue, Equals, int64(5000))
+	c.Assert(out.FieldFloatValue, Equals, float64(5000))
+	c.Assert(out.FieldStringValueOptional, Equals, "")
+	c.Assert(out.FieldStringValueIgnore, Equals, "")
 }

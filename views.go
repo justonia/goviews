@@ -68,6 +68,9 @@ func fillFromMap(out interface{}, basePath []string, in map[string]interface{}) 
 			return err
 		}
 		if v, ok = fieldContainer[field.name]; !ok {
+			if field.optional {
+				continue
+			}
 			return ViewError{fmt.Sprintf("could not find %s.%s in container", strings.Join(field.path, "."), field.name)}
 		}
 
@@ -83,11 +86,11 @@ func fillFromMap(out interface{}, basePath []string, in map[string]interface{}) 
 		assignable := vType.AssignableTo(fieldOutType)
 		//ptrAssignable := vValue.Addr().Type().AssignableTo(fieldOutType)
 		//fmt.Println(field.typ, "ptrAssignable", ptrAssignable)
-		
+
 		if !fieldOutValue.CanSet() {
 			// This should be caught in getFields below
 			panic(ViewError{fmt.Sprintf("cannot set '%s' to at path '%s.%s'", fieldOutType, strings.Join(field.path, "."), field.name)})
-		//} else if ptrAssignable {
+			//} else if ptrAssignable {
 		} else if !assignable && field.convert && vType.ConvertibleTo(fieldOutType) {
 			// convert below
 		} else if !assignable {
@@ -129,11 +132,12 @@ type field struct {
 	name string
 	path []string
 
-	tag     bool
-	index   []int
-	typ     reflect.Type
-	isPtr   bool
-	convert bool
+	tag      bool
+	index    []int
+	typ      reflect.Type
+	isPtr    bool
+	convert  bool
+	optional bool
 }
 
 func fillField(f field) field {
@@ -196,16 +200,17 @@ func getFields(t reflect.Type) []field {
 					tagged := name != ""
 					if name == "" {
 						name = structField.Name
-						path = []string{structField.Name}
+						path = []string{}
 					}
 					fields = append(fields, fillField(field{
-						name:    name,
-						path:    path,
-						tag:     tagged,
-						index:   index,
-						typ:     structFieldType,
-						convert: opts.Contains("convert"),
-						isPtr:   isPtr,
+						name:     name,
+						path:     path,
+						tag:      tagged,
+						index:    index,
+						typ:      structFieldType,
+						convert:  opts.Contains("convert"),
+						optional: opts.Contains("optional"),
+						isPtr:    isPtr,
 					}))
 					if count[typeField.typ] > 1 {
 						// If there were multiple instances, add a second,
@@ -246,7 +251,7 @@ type tagOptions string
 // comma-separated options.
 func parseTag(tag string) (string, []string, tagOptions) {
 	if len(tag) == 0 {
-		panic("empty tag")
+		return "", []string{}, tagOptions("")
 	}
 	if idx := strings.Index(tag, ","); idx != -1 {
 		path := strings.Split(tag[:idx], ".")
