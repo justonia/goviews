@@ -6,7 +6,7 @@ Type-safe access into generic containers in golang.
 TODO
 ====
 
-There is a lot left to implement, including substruct filling, slices, handling
+There is a lot left to implement, including type reflection caching, substruct filling, slices, handling
 of nil values via pointers in the struct, and cleanup of the code. 
 
 Motivation
