@@ -54,8 +54,15 @@ type MutableString interface {
 var mutableFloatType = reflect.TypeOf((*MutableFloat)(nil)).Elem()
 var mutableStringType = reflect.TypeOf((*MutableString)(nil)).Elem()
 
-func Fill(out interface{}, basePath string, in map[string]interface{}) error {
-	return fillFromMap(out, strings.Split(basePath, "."), in)
+func Fill(out interface{}, basePath interface{}, in map[string]interface{}) error {
+	switch basePath.(type) {
+	case string:
+		return fillFromMap(out, strings.Split(basePath.(string), "."), in)
+	case []string:
+		return fillFromMap(out, basePath.([]string), in)
+	default:
+		panic(fmt.Sprintf("bad argument type to views.Fill '%s'", reflect.TypeOf(basePath)))
+	}
 }
 
 func fillFromMap(out interface{}, basePath []string, in map[string]interface{}) error {
