@@ -44,7 +44,17 @@ func (v ViewError) Error() string {
 type MutableFloat interface {
 	Set(float64)
 	Get() float64
+	GetChecked() (float64, bool)
 }
+
+type MutableString interface {
+	Set(string)
+	Get() string
+	GetChecked() (string, bool)
+}
+
+var mutableFloatType = reflect.TypeOf((*MutableFloat)(nil)).Elem()
+var mutableStringType = reflect.TypeOf((*MutableString)(nil)).Elem()
 
 func fillFromMap(out interface{}, basePath []string, in map[string]interface{}) error {
 	container, err := getContainer(basePath, in)
@@ -79,31 +89,54 @@ func fillFromMap(out interface{}, basePath []string, in map[string]interface{}) 
 		fieldOutValue := outValue.FieldByIndex(field.index)
 		fieldOutType := fieldOutValue.Type()
 
-		if fieldOutType.Kind() == reflect.Struct || fieldOutType.Kind() == reflect.Slice || fieldOutType.Kind() == reflect.Ptr {
+		switch fieldOutValue.Kind() {
+		case reflect.Interface:
+			switch {
+			case fieldOutType.Implements(mutableFloatType):
+				if _, ok := v.(float64); ok {
+					fieldOutValue.Set(reflect.ValueOf(floatMapMutator{fieldContainer, field.name}))
+				} else {
+					return ViewError{fmt.Sprintf("cannot assign '%s' to '%s' at path '%s.%s' in struct of type %s", vType, fieldOutType, strings.Join(field.path, "."), field.name, outValue.Type())}
+				}
+			case fieldOutType.Implements(mutableStringType):
+				if _, ok := v.(string); ok {
+					fieldOutValue.Set(reflect.ValueOf(stringMapMutator{fieldContainer, field.name}))
+				} else {
+					return ViewError{fmt.Sprintf("cannot assign '%s' to '%s' at path '%s.%s' in struct of type %s", vType, fieldOutType, strings.Join(field.path, "."), field.name, outValue.Type())}
+				}
+			default:
+				return ViewError{fmt.Sprintf("could not set unknown view interface '%s' to at path '%s.%s'", fieldOutType, strings.Join(field.path, "."), field.name)}
+			}
 			continue
-		}
+		case reflect.Struct:
+			// todo, recurse
+			continue
+		case reflect.Slice:
+			// todo
+			continue
+		case reflect.Ptr:
+			// todo
+			continue
 
-		assignable := vType.AssignableTo(fieldOutType)
-		//ptrAssignable := vValue.Addr().Type().AssignableTo(fieldOutType)
-		//fmt.Println(field.typ, "ptrAssignable", ptrAssignable)
+		default:
+			assignable := vType.AssignableTo(fieldOutType)
 
-		if !fieldOutValue.CanSet() {
-			// This should be caught in getFields below
-			panic(ViewError{fmt.Sprintf("cannot set '%s' to at path '%s.%s'", fieldOutType, strings.Join(field.path, "."), field.name)})
-			//} else if ptrAssignable {
-		} else if !assignable && field.convert && vType.ConvertibleTo(fieldOutType) {
-			// convert below
-		} else if !assignable {
-			return ViewError{fmt.Sprintf("cannot assign or convert '%s' to '%s' at path '%s.%s' in struct of type %s",
-				vType, fieldOutType, strings.Join(field.path, "."), field.name, outValue.Type())}
-		}
+			if !fieldOutValue.CanSet() {
+				// This should be caught in getFields below
+				panic(ViewError{fmt.Sprintf("cannot set '%s' to at path '%s.%s'", fieldOutType, strings.Join(field.path, "."), field.name)})
+			} else if !assignable && field.convert && vType.ConvertibleTo(fieldOutType) {
+				// convert below
+			} else if !assignable {
+				return ViewError{fmt.Sprintf("cannot assign or convert '%s' to '%s' at path '%s.%s' in struct of type %s", vType, fieldOutType, strings.Join(field.path, "."), field.name, outValue.Type())}
+			}
 
-		if !assignable {
-			vValue = vValue.Convert(fieldOutType)
-		} else if field.isPtr {
-			vValue = reflect.ValueOf(&v)
+			if !assignable {
+				vValue = vValue.Convert(fieldOutType)
+			} else if field.isPtr {
+				vValue = reflect.ValueOf(&v)
+			}
+			fieldOutValue.Set(vValue)
 		}
-		fieldOutValue.Set(vValue)
 	}
 
 	return nil
@@ -132,17 +165,56 @@ type field struct {
 	name string
 	path []string
 
-	tag      bool
-	index    []int
-	typ      reflect.Type
-	isPtr    bool
-	convert  bool
-	optional bool
+	tag            bool
+	index          []int
+	typ            reflect.Type
+	isPtr          bool
+	convert        bool
+	optional       bool
+	mutatorFactory interface{} // should be castable to a specific mutator based on typ and the container type
 }
 
 func fillField(f field) field {
 	//f.path = strings.Split(f.name, ".")
 	return f
+}
+
+type floatMapMutator struct {
+	container map[string]interface{}
+	key       string
+}
+
+func (m floatMapMutator) Get() float64 {
+	if v, ok := m.container[m.key].(float64); ok {
+		return v
+	}
+	return 0.0
+}
+func (m floatMapMutator) GetChecked() (float64, bool) {
+	v, ok := m.container[m.key].(float64)
+	return v, ok
+}
+func (m floatMapMutator) Set(value float64) {
+	m.container[m.key] = value
+}
+
+type stringMapMutator struct {
+	container map[string]interface{}
+	key       string
+}
+
+func (m stringMapMutator) Get() string {
+	if v, ok := m.container[m.key].(string); ok {
+		return v
+	}
+	return ""
+}
+func (m stringMapMutator) GetChecked() (string, bool) {
+	v, ok := m.container[m.key].(string)
+	return v, ok
+}
+func (m stringMapMutator) Set(value string) {
+	m.container[m.key] = value
 }
 
 // For each public field in the struct, collect and record it's attributes
@@ -175,14 +247,17 @@ func getFields(t reflect.Type) []field {
 				if structField.PkgPath != "" { // unexported
 					continue
 				}
+
 				tag := structField.Tag.Get("views")
 				if tag == "-" {
 					continue
 				}
+
 				name, path, opts := parseTag(tag)
 				if !isValidTag(name) {
 					name = ""
 				}
+
 				index := make([]int, len(typeField.index)+1)
 				copy(index, typeField.index)
 				index[len(typeField.index)] = i
@@ -211,6 +286,7 @@ func getFields(t reflect.Type) []field {
 						convert:  opts.Contains("convert"),
 						optional: opts.Contains("optional"),
 						isPtr:    isPtr,
+						//mutator:  makeMutator(structFieldType),
 					}))
 					if count[typeField.typ] > 1 {
 						// If there were multiple instances, add a second,

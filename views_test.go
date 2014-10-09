@@ -142,13 +142,16 @@ type subStruct struct {
 type StringTypedef string
 
 type testView struct {
-	FieldFloatConvertValue   int64   `views:"a.b.c,convert"`
-	FieldFloatValue          float64 `views:"a.b.c"`
+	FieldFloatConvertValue   int64        `views:"a.b.c,convert"`
+	FieldFloatValue          float64      `views:"a.b.c"`
+	FieldFloatMutable        MutableFloat `views:"a.b.c"`
 	FieldStringValue         string
 	FieldStringTypedef       StringTypedef `views:"FieldStringValue,convert"`
 	FieldStringValueIgnore   string        `views:"-"`
 	FieldStringValueOptional string        `views:",optional"`
-	//FieldReference          MutableFloat   `views:"a.b.c"`
+	FieldStringMutableValue  MutableString `views:"FieldStringValue"`
+	FieldBoolValue           bool          `views:"a.b.f"`
+	//FieldBoolMutable        MutableBool `views:"a.b.c"`
 	Struct                  subStruct      `views:"a.b.d"`
 	Structs                 []subStruct    `views:"a.e"`
 	GenericStructsValue     []interface{}  `views:"a.e"`
@@ -170,6 +173,9 @@ func (s *ViewsSuite) TestTypeField(c *C) {
 				c.Assert(f.convert, Equals, true)
 			case reflect.Float64:
 				c.Assert(f.convert, Equals, false)
+			case reflect.Interface:
+				c.Assert(f.typ.Implements(reflect.TypeOf((*MutableFloat)(nil)).Elem()), Equals, true)
+			case reflect.Bool:
 			default:
 				panic(fmt.Sprintf("unknown typ field '%s' for a.b.c", f.typ))
 			}
@@ -182,7 +188,7 @@ func (s *ViewsSuite) TestTypeField(c *C) {
 		}
 	}
 	c.Assert(aeCount, Equals, 3)
-	c.Assert(abcCount, Equals, 2)
+	c.Assert(abcCount, Equals, 3)
 
 	fields = getFields(reflect.TypeOf(subStruct{}))
 	c.Assert(fields, HasLen, 2)
@@ -212,9 +218,7 @@ func (s *ViewsSuite) TestFillFromMap(c *C) {
 						20
 					]
 				},
-				"f": [
-
-				]
+				"f": true
 			},
 			"e": [{
 				"field1": "asdf"
@@ -222,7 +226,8 @@ func (s *ViewsSuite) TestFillFromMap(c *C) {
 				"field2": ["1", "2"]
 			}],
 			"g": {
-				"a": { "e": [], "b": { "c": 5000, "d":[]  } } ,
+				"f": false,
+				"a": { "e": [], "b": { "c": 5000, "d":[], "f":true  } } ,
 				"FieldStringValue": "barbaz"
 			}
 		},
@@ -235,11 +240,22 @@ func (s *ViewsSuite) TestFillFromMap(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(out.FieldFloatConvertValue, Equals, int64(2000))
 	c.Assert(out.FieldFloatValue, Equals, float64(2000))
+	c.Assert(out.FieldFloatMutable.Get(), Equals, float64(2000))
 	c.Assert(out.FieldStringValue, Equals, "foobar")
 	c.Assert(out.FieldStringTypedef, Equals, StringTypedef("foobar"))
 	c.Assert(out.FieldStringValueOptional, Equals, "foobar2")
 	c.Assert(out.FieldStringValueIgnore, Equals, "")
+	c.Assert(out.FieldBoolValue, Equals, true)
 
+	// try changing a value inside data
+	out.FieldFloatMutable.Set(float64(4000))
+	c.Assert(out.FieldFloatMutable.Get(), Equals, float64(4000))
+	out = testView{}
+	err = fillFromMap(&out, []string{}, data)
+	c.Assert(err, IsNil)
+	c.Assert(out.FieldFloatMutable.Get(), Equals, float64(4000))
+
+	data = s.getData(validData)
 	out = testView{}
 	err = fillFromMap(&out, []string{"a", "g"}, data)
 	c.Assert(err, IsNil)
@@ -248,4 +264,58 @@ func (s *ViewsSuite) TestFillFromMap(c *C) {
 	c.Assert(out.FieldFloatValue, Equals, float64(5000))
 	c.Assert(out.FieldStringValueOptional, Equals, "")
 	c.Assert(out.FieldStringValueIgnore, Equals, "")
+}
+
+func (s *ViewsSuite) TestFillFromMapBad(c *C) {
+	type UnknownInterface interface {
+		Bar()
+	}
+	type foo struct {
+		Barr UnknownInterface
+	}
+	validData := []byte(`
+	{
+		"Barr": 5
+	}`)
+	data := s.getData(validData)
+	out := foo{}
+	err := fillFromMap(&out, []string{}, data)
+	c.Assert(err, ErrorMatches, ".*could not set unknown view interface 'views.UnknownInterface'.*")
+
+	type foo2 struct {
+		NotAFloat MutableFloat
+	}
+	validData = []byte(`
+	{
+		"NotAFloat": "1234"
+	}`)
+	data = s.getData(validData)
+	out2 := foo2{}
+	err = fillFromMap(&out2, []string{}, data)
+	c.Assert(err, ErrorMatches, ".*cannot assign 'string' to 'views.MutableFloat' at path '.NotAFloat' in struct of type views.foo2.*")
+
+	type foo3 struct {
+		NotAString MutableString
+	}
+	validData = []byte(`
+	{
+		"NotAString": 1234
+	}`)
+	data = s.getData(validData)
+	out3 := foo3{}
+	err = fillFromMap(&out3, []string{}, data)
+	c.Assert(err, ErrorMatches, ".*cannot assign 'float64' to 'views.MutableString' at path '.NotAString' in struct of type views.foo3.*")
+
+	type foo4 struct {
+		FieldBoolConvertValue bool `views:",convert"`
+	}
+	validData = []byte(`
+	{
+		"FieldBoolConvertValue": 1234
+	}`)
+	data = s.getData(validData)
+	out4 := foo4{}
+	err = fillFromMap(&out4, []string{}, data)
+	c.Assert(err, ErrorMatches, ".*cannot assign or convert 'float64' to 'bool'.*")
+
 }
