@@ -26,11 +26,9 @@
 package views
 
 import (
-	//"encoding/json"
 	"fmt"
 	"reflect"
 	"strings"
-	//"sync"
 )
 
 type ViewError struct {
@@ -55,6 +53,10 @@ type MutableString interface {
 
 var mutableFloatType = reflect.TypeOf((*MutableFloat)(nil)).Elem()
 var mutableStringType = reflect.TypeOf((*MutableString)(nil)).Elem()
+
+func Fill(out interface{}, basePath string, in map[string]interface{}) error {
+	return fillFromMap(out, strings.Split(basePath, "."), in)
+}
 
 func fillFromMap(out interface{}, basePath []string, in map[string]interface{}) error {
 	container, err := getContainer(basePath, in)
@@ -174,11 +176,6 @@ type field struct {
 	mutatorFactory interface{} // should be castable to a specific mutator based on typ and the container type
 }
 
-func fillField(f field) field {
-	//f.path = strings.Split(f.name, ".")
-	return f
-}
-
 type floatMapMutator struct {
 	container map[string]interface{}
 	key       string
@@ -217,7 +214,7 @@ func (m stringMapMutator) Set(value string) {
 	m.container[m.key] = value
 }
 
-// For each public field in the struct, collect and record it's attributes
+// This is based off of encoding/json
 func getFields(t reflect.Type) []field {
 	// Anonymous fields to explore at the current level and the next.
 	current := []field{}
@@ -277,7 +274,7 @@ func getFields(t reflect.Type) []field {
 						name = structField.Name
 						path = []string{}
 					}
-					fields = append(fields, fillField(field{
+					fields = append(fields, field{
 						name:     name,
 						path:     path,
 						tag:      tagged,
@@ -287,7 +284,7 @@ func getFields(t reflect.Type) []field {
 						optional: opts.Contains("optional"),
 						isPtr:    isPtr,
 						//mutator:  makeMutator(structFieldType),
-					}))
+					})
 					if count[typeField.typ] > 1 {
 						// If there were multiple instances, add a second,
 						// so that the annihilation code will see a duplicate.
@@ -301,13 +298,13 @@ func getFields(t reflect.Type) []field {
 				// Record new anonymous struct to explore in next round.
 				nextCount[structFieldType]++
 				if nextCount[structFieldType] == 1 {
-					next = append(next, fillField(field{name: structFieldType.Name(), path: path, index: index, typ: structFieldType}))
+					next = append(next, field{name: structFieldType.Name(), path: path, index: index, typ: structFieldType})
 				}
 			}
 		}
 	}
 
-	// Sort by path depth so that we don't recurse into the map structure more
+	// TODO: Sort by path depth so that we don't recurse into the map structure more
 	// than necessary.
 	return fields
 }

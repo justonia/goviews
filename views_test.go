@@ -319,3 +319,46 @@ func (s *ViewsSuite) TestFillFromMapBad(c *C) {
 	c.Assert(err, ErrorMatches, ".*cannot assign or convert 'float64' to 'bool'.*")
 
 }
+
+func (s *ViewsSuite) TestExample(c *C) {
+	someJson := []byte(`
+	{
+		"a": {
+			"b": {
+				"c": 2000.12354,
+				"d": {
+					"field1": "foobar"
+				},
+                "E": 432.1
+			}
+		}
+	}`)
+
+    data := make(map[string]interface{})
+    json.Unmarshal(someJson, &data)
+    
+    type B struct {
+        C      int64              `views:"c,convert"`
+        Field1 string             `views:"d.field1"`
+        E      MutableFloat
+    }
+
+    b := B{}
+	if err := Fill(&b, "a.b", data); err != nil {
+		panic(err)
+	}
+
+    c.Assert(b.C, Equals, int64(2000))
+    c.Assert(b.Field1, Equals, "foobar")
+    c.Assert(b.E.Get(), Equals, 432.1)
+
+    b.E.Set(100.34)
+	c.Assert(b.E.Get(), Equals, 100.34)
+	container, err := getContainer([]string{"a","b"}, data)
+	c.Assert(err, IsNil)
+	f, ok := container["E"].(float64)
+	c.Assert(ok, Equals, true)
+	c.Assert(f, Equals, 100.34)
+	
+    // data["a]["b"]["E"] == 100.34
+}
