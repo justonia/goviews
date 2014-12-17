@@ -66,7 +66,14 @@ func Fill(out interface{}, basePath interface{}, in map[string]interface{}) erro
 }
 
 func fillFromMap(out interface{}, basePath []string, in map[string]interface{}) error {
-	container, err := getContainer(basePath, in)
+	var container map[string]interface{}
+	var err error
+
+	if len(basePath) == 0 || basePath[0] == "" {
+		container = in
+	} else {
+		container, err = getContainer(basePath, in)
+	}
 	if err != nil {
 		return err
 	}
